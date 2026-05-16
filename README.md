@@ -264,3 +264,8 @@ python gemini/model-check.py key --report model-report.txt
 - 脚本的输入和输出包含明文 API Key，请注意本地存储安全。
 - 不同平台的“余额/额度”字段含义可能随官方接口调整而变化。
 - 本项目脚本由 AI 生成，仅用于学习与技术研究，请勿用于非法用途。
+
+## 外部链接
+
+- [Linux DO 论坛](https://linux.do/) 感谢社区提供的 AI 相关资源，下面的博客文章中提到的论坛均为 LINUX DO 论坛 
+- [博客文章](https://jibukeshi.dpdns.org/posts/project/ai-api-key-checker.html) 谈谈我制作这个项目的动机以及一些细节
