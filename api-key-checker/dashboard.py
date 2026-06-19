@@ -157,6 +157,9 @@ def load_keys():
 def save_keys(keys):
     CONFIG_FILE.write_text(json.dumps(keys, indent=2, ensure_ascii=False))
 
+def _split_keys(text):
+    return [k.strip() for k in text.strip().split("\n") if k.strip()]
+
 # ── Streamlit ──
 st.set_page_config(page_title="API Key 仪表盘", page_icon="🔑", layout="wide", initial_sidebar_state="collapsed")
 
@@ -216,8 +219,8 @@ with st.sidebar:
     new_keys = {}
     for pf in PLATFORMS:
         existing = st.session_state.saved_keys.get(pf["id"], "")
-        val = st.text_input(pf["name"], value=existing,
-            placeholder=f"输入 {pf['name']} Key...", key=f"key_{pf['id']}", type="password", label_visibility="collapsed")
+        val = st.text_area(pf["name"], value=existing,
+            placeholder=f"输入 {pf['name']} Key（每行一个）...", key=f"key_{pf['id']}", height=68, label_visibility="collapsed")
         if val.strip(): new_keys[pf["id"]] = val.strip()
         elif pf["id"] in st.session_state.saved_keys and st.session_state.saved_keys[pf["id"]]:
             new_keys[pf["id"]] = st.session_state.saved_keys[pf["id"]]
@@ -243,12 +246,15 @@ if st.session_state.get("single_check_platform_id"):
     pf_id = st.session_state.pop("single_check_platform_id")
     pf = next((p for p in PLATFORMS if p["id"] == pf_id), None)
     if pf and st.session_state.saved_keys.get(pf["id"]):
-        key = st.session_state.saved_keys[pf["id"]]
-        _detect_status.info(f"{pf['name']} 检测中...")
+        pf_keys = _split_keys(st.session_state.saved_keys[pf["id"]])
+        pf_results = []
+        _detect_status.info(f"{pf['name']} 检测中 ({len(pf_keys)} 个 Key)...")
         with requests.Session() as sess:
-            status, msg = pf["check"](sess, key, pf["api_url"])
+            for key in pf_keys:
+                status, msg = pf["check"](sess, key, pf["api_url"])
+                pf_results.append({"status": status, "msg": msg, "key": key})
         results = st.session_state.get("results", {})
-        results[pf["id"]] = {"status": status, "msg": msg, "key": key}
+        results[pf["id"]] = pf_results
         st.session_state.results = results
         st.session_state.last_check = datetime.now().strftime("%H:%M:%S")
         _detect_status.success(f"{pf['name']} 检测完成")
@@ -261,21 +267,27 @@ _detect_prog2 = st.empty()
 
 if st.session_state.needs_check and st.session_state.saved_keys:
     results = {}
-    total = len([pf for pf in PLATFORMS if st.session_state.saved_keys.get(pf["id"])])
+    # 统计所有 Key 总数
+    total_keys = 0
+    for pf in PLATFORMS:
+        total_keys += len(_split_keys(st.session_state.saved_keys.get(pf["id"], "")))
     done = 0
     with requests.Session() as sess:
         for pf in PLATFORMS:
-            key = st.session_state.saved_keys.get(pf["id"])
-            if not key: continue
-            done += 1
-            _detect_prog2.progress(done/total)
-            _detect_status2.info(f"{pf['name']} 检测中...")
-            status, msg = pf["check"](sess, key, pf["api_url"])
-            results[pf["id"]] = {"status": status, "msg": msg, "key": key}
+            pf_keys = _split_keys(st.session_state.saved_keys.get(pf["id"], ""))
+            if not pf_keys: continue
+            pf_results = []
+            for key in pf_keys:
+                done += 1
+                _detect_prog2.progress(done/total_keys)
+                _detect_status2.info(f"{pf['name']} ({done}/{total_keys})...")
+                status, msg = pf["check"](sess, key, pf["api_url"])
+                pf_results.append({"status": status, "msg": msg, "key": key})
+            results[pf["id"]] = pf_results
     st.session_state.results = results
     st.session_state.last_check = datetime.now().strftime("%H:%M:%S")
     st.session_state.needs_check = False
-    _detect_status2.success(f"检测完成（{total} 个平台）")
+    _detect_status2.success(f"检测完成（{total_keys} 个 Key）")
     _detect_prog2.empty()
     time.sleep(.5)
     st.rerun()
@@ -284,38 +296,40 @@ if st.session_state.needs_check and st.session_state.saved_keys:
 results = st.session_state.results
 
 for pi, pf in enumerate(PLATFORMS):
-    r = results.get(pf["id"]) if results else None
+    key_results = results.get(pf["id"]) if results else None
     color = pf["color"]
-    has_key = bool(st.session_state.saved_keys.get(pf["id"]))
+    has_key = bool(_split_keys(st.session_state.saved_keys.get(pf["id"], "")))
     has_balance = pf.get("has_balance", True)
     btn_disabled = not (has_balance and has_key)
 
     card_col, btn_col = st.columns([5, 1], vertical_alignment="center")
     with card_col:
-        if r:
-            k = r["key"]; masked = k[:8]+"..."+k[-4:] if len(k)>16 else k
-            sts = r["status"]; msg = r["msg"]
-            if sts == "positive":
-                badge_cls, badge_txt, bal_clr = "badge-ok", "可用", "#22c55e"
-                bal_display = msg.split("（")[0] if "（" in msg else msg.split(" - ")[0] if " - " in msg else msg
-            elif sts == "zero":
-                badge_cls, badge_txt, bal_clr = "badge-zero", "余额为 0", "#eab308"
-                bal_display = msg
-            elif sts == "invalid":
-                badge_cls, badge_txt, bal_clr = "badge-invalid", "不可用", "#ef4444"
-                bal_display = msg
-            else:
-                badge_cls, badge_txt, bal_clr = "badge-fail", "失败", "#94a3b8"
-                bal_display = msg
+        if key_results:
+            key_lines = ""
+            for r in key_results:
+                k = r["key"]
+                masked = k[:10] + "..." + k[-4:] if len(k) > 16 else k
+                sts = r["status"]
+                msg = r["msg"]
+                emoji = {"positive": "✅", "zero": "⭕", "invalid": "❌", "fail": "⚠️"}.get(sts, "⚠️")
+                key_lines += f'<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #f1f5f9;display:flex;gap:8px">'
+                key_lines += f'<span>{emoji}</span>'
+                key_lines += f'<code style="font-size:11px;color:#94a3b8;background:#f8fafc;padding:0 4px;border-radius:3px;flex-shrink:0">{masked}</code>'
+                key_lines += f'<span style="color:#64748b">{msg}</span></div>'
+
+            pos_c = sum(1 for r in key_results if r["status"] == "positive")
+            zero_c = sum(1 for r in key_results if r["status"] == "zero")
+            inv_c = sum(1 for r in key_results if r["status"] == "invalid")
+            total_c = len(key_results)
+
             st.markdown(f"""
             <div class="card" style="border-left:3px solid {color}">
-                <div class="card-header">
+                <div class="card-header" style="margin-bottom:4px">
                     <span class="card-name" style="color:{color}">{pf['name']}</span>
-                    <span class="card-badge {badge_cls}">{badge_txt}</span>
+                    <span class="card-badge badge-ok" style="background:#f1f5f9;color:#475569;font-size:11px">{total_c} 个 Key</span>
                 </div>
-                <div class="card-balance" style="color:{bal_clr}">{bal_display}</div>
-                <div class="card-detail">{msg}</div>
-                <div class="card-key">{masked}</div>
+                {' · '.join(f'✅ {pos_c} 可用' if pos_c else '', f'⭕ {zero_c} 余额0' if zero_c else '', f'❌ {inv_c} 不可用' if inv_c else '') or ''}
+                {key_lines}
             </div>
             """, unsafe_allow_html=True)
         else:
@@ -336,27 +350,35 @@ for pi, pf in enumerate(PLATFORMS):
 
 # ── 全局汇总 ──
 if results:
-    pos = sum(1 for r in results.values() if r["status"]=="positive")
-    zero = sum(1 for r in results.values() if r["status"]=="zero")
-    inv = sum(1 for r in results.values() if r["status"]=="invalid")
-    fail = sum(1 for r in results.values() if r["status"]=="fail")
-
-    # 统计总余额
+    pos_k = zero_k = inv_k = fail_k = 0
     total_balance = 0.0
     balance_count = 0
-    for pf in PLATFORMS:
-        r = results.get(pf["id"])
-        if r and r["status"] == "positive" and pf.get("has_balance", True):
-            nums = re.findall(r'[\d]+\.?[\d]*', r["msg"])
-            if nums:
-                total_balance += float(nums[0])
-                balance_count += 1
+    all_valid = []
 
-    # 汇总顶栏
+    for pi, pf in enumerate(PLATFORMS):
+        kr = results.get(pf["id"])
+        if not kr: continue
+        for r in kr:
+            sts = r["status"]
+            if sts == "positive":
+                pos_k += 1
+                all_valid.append((pf["name"], r["key"]))
+                if pf.get("has_balance", True):
+                    nums = re.findall(r'[\d]+\.?[\d]*', r["msg"])
+                    if nums:
+                        total_balance += float(nums[0])
+                        balance_count += 1
+            elif sts == "zero":
+                zero_k += 1
+            elif sts == "invalid":
+                inv_k += 1
+            else:
+                fail_k += 1
+
     summary_parts = []
     if balance_count > 0:
         summary_parts.append(f"💰 **总余额**: {total_balance:.2f}")
-    summary_parts.append(f"✅ **可用**: {pos} 个平台")
+    summary_parts.append(f"✅ **可用 Key**: {pos_k}")
     if st.session_state.last_check:
         summary_parts.append(f"⏰ 上次检测: {st.session_state.last_check}")
 
@@ -371,18 +393,18 @@ if results:
     st.markdown("---")
     cols = st.columns(4)
     for i, (lbl, cnt, clr) in enumerate([
-        ("可用", pos, "#22c55e"),
-        ("余额为 0", zero, "#eab308"),
-        ("不可用", inv, "#ef4444"),
-        ("检测失败", fail, "#94a3b8"),
+        ("可用", pos_k, "#22c55e"),
+        ("余额为 0", zero_k, "#eab308"),
+        ("不可用", inv_k, "#ef4444"),
+        ("检测失败", fail_k, "#94a3b8"),
     ]):
         with cols[i]:
             st.markdown(f'<div class="stat-box" style="background:{clr}08"><div class="stat-num" style="color:{clr}">{cnt}</div><div class="stat-label">{lbl}</div></div>', unsafe_allow_html=True)
 
-    valid = {pf["name"]:r["key"] for pf in PLATFORMS if results.get(pf["id"],{}).get("status")=="positive"}
-    if valid:
+    if all_valid:
         with st.expander("所有可用的 Key"):
-            for name, key in valid.items(): st.code(f"# {name}\n{key}", language="text")
+            for name, key in all_valid:
+                st.code(f"# {name}\n{key}", language="text")
 
 st.markdown("---")
 st.markdown('<div style="text-align:center;color:#94a3b8;font-size:12px">API Key 仪表盘 · Key 仅用于检测，不会上传</div>', unsafe_allow_html=True)
