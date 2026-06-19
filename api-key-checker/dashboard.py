@@ -334,12 +334,39 @@ for pi, pf in enumerate(PLATFORMS):
         if st.button("检测", key=f"sb_{pf['id']}", disabled=btn_disabled, use_container_width=True):
             st.session_state["single_check_platform_id"] = pf["id"]
 
-# ── 统计 ──
+# ── 全局汇总 ──
 if results:
     pos = sum(1 for r in results.values() if r["status"]=="positive")
     zero = sum(1 for r in results.values() if r["status"]=="zero")
     inv = sum(1 for r in results.values() if r["status"]=="invalid")
     fail = sum(1 for r in results.values() if r["status"]=="fail")
+
+    # 统计总余额
+    total_balance = 0.0
+    balance_count = 0
+    for pf in PLATFORMS:
+        r = results.get(pf["id"])
+        if r and r["status"] == "positive" and pf.get("has_balance", True):
+            nums = re.findall(r'[\d]+\.?[\d]*', r["msg"])
+            if nums:
+                total_balance += float(nums[0])
+                balance_count += 1
+
+    # 汇总顶栏
+    summary_parts = []
+    if balance_count > 0:
+        summary_parts.append(f"💰 **总余额**: {total_balance:.2f}")
+    summary_parts.append(f"✅ **可用**: {pos} 个平台")
+    if st.session_state.last_check:
+        summary_parts.append(f"⏰ 上次检测: {st.session_state.last_check}")
+
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #bbf7d0;
+                border-radius:12px;padding:12px 20px;margin-bottom:16px;
+                font-size:15px;display:flex;justify-content:space-between;align-items:center">
+        {' | '.join(summary_parts)}
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown("---")
     cols = st.columns(4)
