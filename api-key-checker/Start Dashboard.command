@@ -3,7 +3,7 @@
 # 双击此文件即可启动（macOS .command 文件）
 # 项目更新时请同步修改此文件
 
-cd "$(dirname "$0")/api-key-checker"
+cd "$(dirname "$0")"
 
 echo "================================================"
 echo "  🔑 API Key Checker Dashboard"
